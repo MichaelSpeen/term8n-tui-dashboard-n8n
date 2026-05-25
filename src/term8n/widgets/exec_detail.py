@@ -44,7 +44,7 @@ class ExecutionDetail(Widget):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._nodes: list[NodeRun] = []
+        self._node_runs: list[NodeRun] = []
 
     def compose(self) -> ComposeResult:
         yield Label("Select an execution above to inspect its nodes", id="detail-label")
@@ -56,7 +56,7 @@ class ExecutionDetail(Widget):
         yield t
 
     def show_execution(self, execution: Execution) -> None:
-        self._nodes = execution.node_runs
+        self._node_runs = execution.node_runs
         icon, _ = _STATUS.get(execution.status, ("?", "dim"))
         duration = _fmt_dur(execution.duration_seconds)
         self.query_one("#detail-label", Label).update(
@@ -65,12 +65,12 @@ class ExecutionDetail(Widget):
         )
         table = self.query_one(DataTable)
         table.clear()
-        max_ms = max((n.execution_time_ms for n in self._nodes), default=1) or 1
-        for i, node in enumerate(self._nodes):
+        max_ms = max((n.execution_time_ms for n in self._node_runs), default=1) or 1
+        for i, node in enumerate(self._node_runs):
             table.add_row(*_make_row(node, max_ms), key=str(i))
 
     def clear_detail(self) -> None:
-        self._nodes = []
+        self._node_runs = []
         self.query_one("#detail-label", Label).update(
             "Select an execution above to inspect its nodes"
         )
@@ -78,8 +78,8 @@ class ExecutionDetail(Widget):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         idx = int(str(event.row_key.value))
-        if 0 <= idx < len(self._nodes):
-            self.post_message(ExecutionDetail.NodeSelected(self._nodes[idx]))
+        if 0 <= idx < len(self._node_runs):
+            self.post_message(ExecutionDetail.NodeSelected(self._node_runs[idx]))
 
 
 def _make_row(node: NodeRun, max_ms: int) -> tuple:

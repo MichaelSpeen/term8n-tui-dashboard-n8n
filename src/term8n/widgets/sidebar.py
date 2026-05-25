@@ -12,7 +12,7 @@ class WorkflowSidebar(Widget):
     DEFAULT_CSS = """
     WorkflowSidebar {
         width: 26;
-        border-right: thick $primary-darken-2;
+        border-right: round $primary-darken-1;
     }
     WorkflowSidebar > .sidebar-title {
         width: 100%;

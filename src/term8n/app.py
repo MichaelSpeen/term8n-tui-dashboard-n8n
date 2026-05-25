@@ -10,6 +10,7 @@ from .config import Config
 from .widgets.exec_detail import ExecutionDetail
 from .widgets.exec_table import ExecutionTable
 from .widgets.sidebar import WorkflowSidebar
+from .widgets.stats_bar import StatsBar
 
 
 class Term8nApp(App):
@@ -43,6 +44,7 @@ class Term8nApp(App):
         with Horizontal(id="main-container"):
             yield WorkflowSidebar(id="sidebar")
             with Vertical(id="right-pane"):
+                yield StatsBar(id="stats-bar")
                 yield ExecutionTable(id="exec-table")
                 yield ExecutionDetail(id="exec-detail")
         yield Footer()
@@ -84,6 +86,7 @@ class Term8nApp(App):
             counts[e.workflow_id] = counts.get(e.workflow_id, 0) + 1
 
         self.query_one(WorkflowSidebar).update_counts(counts)
+        self.query_one(StatsBar).update_stats(self._executions)
         self.query_one(ExecutionTable).update_executions(self._executions)
         self._update_subtitle()
 

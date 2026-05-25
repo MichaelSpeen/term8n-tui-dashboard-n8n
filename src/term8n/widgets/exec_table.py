@@ -36,7 +36,7 @@ class ExecutionTable(Widget):
     DEFAULT_CSS = """
     ExecutionTable {
         height: 1fr;
-        border: thick $primary-darken-2;
+        border: round $primary-darken-1;
     }
     ExecutionTable DataTable {
         height: 1fr;

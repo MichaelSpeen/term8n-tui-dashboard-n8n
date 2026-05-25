@@ -18,16 +18,7 @@ _STATUS_STYLE: dict[str, tuple[str, str]] = {
     "new":     ("○", "dim white"),
 }
 
-_MODE_LABELS: dict[str, str] = {
-    "webhook":  "hook",
-    "trigger":  "trig",
-    "manual":   "manu",
-    "schedule": "cron",
-    "internal": "int ",
-    "retry":    "retry",
-}
-
-_COLS = ["id", "workflow", "status", "mode", "started", "duration"]
+_COLS = ["id", "workflow", "status", "duration", "started"]
 
 
 class ExecutionTable(Widget):
@@ -51,11 +42,10 @@ class ExecutionTable(Widget):
     def compose(self) -> ComposeResult:
         t = DataTable(id="dt", cursor_type="row", zebra_stripes=True)
         t.add_column("ID",       key="id",       width=8)
-        t.add_column("Workflow", key="workflow",  width=24)
+        t.add_column("Workflow", key="workflow",  width=28)
         t.add_column("Status",   key="status",   width=12)
-        t.add_column("Mode",     key="mode",     width=6)
+        t.add_column("Duration", key="duration", width=10)
         t.add_column("Started",  key="started",  width=10)
-        t.add_column("Duration", key="duration", width=9)
         yield t
 
     def update_executions(self, executions: list[Execution]) -> None:
@@ -76,17 +66,15 @@ class ExecutionTable(Widget):
 def _make_row(e: Execution) -> tuple:
     icon, style = _STATUS_STYLE.get(e.status, ("?", "dim"))
     status_cell = Text(f"{icon} {e.status.capitalize()}", style=style)
-    mode_cell = _MODE_LABELS.get(e.mode, e.mode[:5])
     short_id = Text(f"#{e.id[-6:]}", style="dim")
-    wf_name = e.workflow_name[:23] + "…" if len(e.workflow_name) > 24 else e.workflow_name
+    wf_name = e.workflow_name[:27] + "…" if len(e.workflow_name) > 28 else e.workflow_name
 
     return (
         short_id,
         wf_name,
         status_cell,
-        mode_cell,
-        _fmt_age(e.started_at),
         _fmt_duration(e.duration_seconds),
+        _fmt_age(e.started_at),
     )
 
 

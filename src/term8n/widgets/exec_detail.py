@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Label, Static
+from textual.widgets import DataTable, Label
 
 from ..api import Execution, NodeRun
 
@@ -16,11 +15,11 @@ _STATUS = {
     "error":   ("✗", "bold red"),
 }
 
-_MAX_BAR = 36
+_MAX_BAR = 32
 
 
 class ExecutionDetail(Widget):
-    BORDER_TITLE = "Node Timeline"
+    BORDER_TITLE = "Node Timeline  (Enter / click to inspect)"
 
     DEFAULT_CSS = """
     ExecutionDetail {
@@ -33,65 +32,75 @@ class ExecutionDetail(Widget):
         padding: 0 1;
         width: 100%;
     }
-    ExecutionDetail > VerticalScroll {
+    ExecutionDetail > DataTable {
         height: 1fr;
-        padding: 0 1;
     }
     """
 
+    class NodeSelected(Message):
+        def __init__(self, node: NodeRun) -> None:
+            super().__init__()
+            self.node = node
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._nodes: list[NodeRun] = []
+
     def compose(self) -> ComposeResult:
         yield Label("Select an execution above to inspect its nodes", id="detail-label")
-        with VerticalScroll():
-            yield Static(id="timeline")
+        t = DataTable(id="node-dt", cursor_type="row", zebra_stripes=True)
+        t.add_column("Node",    key="node",  width=26)
+        t.add_column("",        key="bar",   width=_MAX_BAR + 2)
+        t.add_column("Time",    key="time",  width=8, )
+        t.add_column("Items",   key="items", width=6)
+        yield t
 
     def show_execution(self, execution: Execution) -> None:
+        self._nodes = execution.node_runs
         icon, _ = _STATUS.get(execution.status, ("?", "dim"))
         duration = _fmt_dur(execution.duration_seconds)
         self.query_one("#detail-label", Label).update(
             f"#{execution.id}  ·  {execution.workflow_name}  ·  "
             f"{icon} {execution.status.capitalize()}  ·  {duration}"
         )
-        self.query_one("#timeline", Static).update(_build_timeline(execution.node_runs))
+        table = self.query_one(DataTable)
+        table.clear()
+        max_ms = max((n.execution_time_ms for n in self._nodes), default=1) or 1
+        for i, node in enumerate(self._nodes):
+            table.add_row(*_make_row(node, max_ms), key=str(i))
 
     def clear_detail(self) -> None:
+        self._nodes = []
         self.query_one("#detail-label", Label).update(
             "Select an execution above to inspect its nodes"
         )
-        self.query_one("#timeline", Static).update("")
+        self.query_one(DataTable).clear()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        idx = int(str(event.row_key.value))
+        if 0 <= idx < len(self._nodes):
+            self.post_message(ExecutionDetail.NodeSelected(self._nodes[idx]))
 
 
-def _build_timeline(nodes: list[NodeRun]) -> Table:
-    table = Table.grid(padding=(0, 1))
-    table.add_column("name",  width=28, no_wrap=True)
-    table.add_column("bar",   width=_MAX_BAR + 2, no_wrap=True)
-    table.add_column("time",  width=9, justify="right")
+def _make_row(node: NodeRun, max_ms: int) -> tuple:
+    if node.error:
+        name_text = Text(node.name[:24], style="bold red")
+        bar_char, bar_style = "█", "bold red"
+        time_text = Text(f"{node.execution_time_ms}ms", style="red")
+    elif node.execution_time_ms == 0:
+        name_text = Text(node.name[:24], style="dim")
+        bar_char, bar_style = "▒", "yellow"
+        time_text = Text("—", style="dim yellow")
+    else:
+        name_text = Text(node.name[:24], style="white")
+        bar_char, bar_style = "█", "green"
+        time_text = Text(f"{node.execution_time_ms}ms", style="dim")
 
-    if not nodes:
-        table.add_row(Text("No node data available", style="dim"), "", "")
-        return table
+    width = max(1, int((node.execution_time_ms / max_ms) * _MAX_BAR))
+    bar_text = Text(bar_char * width, style=bar_style)
 
-    max_ms = max(n.execution_time_ms for n in nodes) or 1
-
-    for node in nodes:
-        if node.error:
-            bar_char, bar_style = "█", "bold red"
-            name_text = Text(node.name[:26], style="bold red")
-            time_text = Text(f"{node.execution_time_ms}ms", style="red")
-        elif node.execution_time_ms == 0:
-            bar_char, bar_style = "▒", "yellow"
-            name_text = Text(node.name[:26], style="dim")
-            time_text = Text("—", style="dim yellow")
-        else:
-            bar_char, bar_style = "█", "green"
-            name_text = Text(node.name[:26], style="white")
-            time_text = Text(f"{node.execution_time_ms}ms", style="dim")
-
-        width = max(1, int((node.execution_time_ms / max_ms) * _MAX_BAR))
-        bar_text = Text(bar_char * width, style=bar_style)
-
-        table.add_row(name_text, bar_text, time_text)
-
-    return table
+    items_text = Text(str(node.output_items), style="dim")
+    return name_text, bar_text, time_text, items_text
 
 
 def _fmt_dur(seconds: float | None) -> str:

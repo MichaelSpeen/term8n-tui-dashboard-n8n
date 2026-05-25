@@ -9,6 +9,7 @@ from .api import Execution, N8NClient, Workflow
 from .config import Config
 from .widgets.exec_detail import ExecutionDetail
 from .widgets.exec_table import ExecutionTable
+from .widgets.node_modal import NodeDetailModal
 from .widgets.sidebar import WorkflowSidebar
 from .widgets.stats_bar import StatsBar
 
@@ -127,6 +128,11 @@ class Term8nApp(App):
 
     async def action_refresh(self) -> None:
         await self._poll_executions()
+
+    async def on_execution_detail_node_selected(
+        self, event: ExecutionDetail.NodeSelected
+    ) -> None:
+        await self.push_screen(NodeDetailModal(event.node))
 
     def action_clear_detail(self) -> None:
         self._selected_execution_id = None

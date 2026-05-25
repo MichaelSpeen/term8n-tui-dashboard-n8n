@@ -16,6 +16,7 @@ class NodeRun:
     execution_time_ms: int
     output_items: int
     error: Optional[str] = None
+    output_data: list[dict] = field(default_factory=list)  # json of each output item
 
 
 @dataclass
@@ -118,11 +119,10 @@ class N8NClient:
             )
             for node_name, runs in run_data.items():
                 for run in runs:
-                    items = sum(
-                        len(branch)
-                        for branch in (run.get("data", {}).get("main") or [])
-                        if branch
-                    )
+                    branches = run.get("data", {}).get("main") or []
+                    items = sum(len(b) for b in branches if b)
+                    first_branch = branches[0] if branches else []
+                    output_data = [item.get("json", {}) for item in first_branch if item]
                     err = run.get("error")
                     err_msg = err.get("message") if isinstance(err, dict) else None
                     node_runs.append(
@@ -132,6 +132,7 @@ class N8NClient:
                             execution_time_ms=run.get("executionTime", 0),
                             output_items=items,
                             error=err_msg,
+                            output_data=output_data,
                         )
                     )
             node_runs.sort(key=lambda n: n.start_time_ms)

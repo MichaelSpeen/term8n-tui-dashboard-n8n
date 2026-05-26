@@ -12,6 +12,7 @@ from .widgets.exec_table import ExecutionTable
 from .widgets.node_modal import NodeDetailModal
 from .widgets.sidebar import WorkflowSidebar
 from .widgets.stats_bar import StatsBar
+from .widgets.sys_bar import SysBar
 
 
 class Term8nApp(App):
@@ -48,6 +49,7 @@ class Term8nApp(App):
                 yield StatsBar(id="stats-bar")
                 yield ExecutionTable(id="exec-table")
                 yield ExecutionDetail(id="exec-detail")
+        yield SysBar(id="sys-bar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -60,6 +62,7 @@ class Term8nApp(App):
             )
         self.call_after_refresh(self._initial_load)
         self.set_interval(self.config.poll_interval, self._poll_executions)
+        self.set_interval(2.0, lambda: self.query_one(SysBar).refresh_stats())
 
     async def _initial_load(self) -> None:
         try:

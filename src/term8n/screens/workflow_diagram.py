@@ -144,11 +144,31 @@ def _build_diagram(wf: WorkflowDef) -> Text:
         boxes[node.name] = (cx, cy, bw, _BOX_H)
 
     # ── draw connections ───────────────────────────────────────────────────────
+    # Pre-compute shared detour row per source: all backward arcs from the same
+    # source share one horizontal run → clean left-spine, one horizontal bar.
+    backward_detour: dict[str, int] = {}
     for src_name, branches in wf.connections.items():
         if src_name not in boxes:
             continue
         sx, sy, sw, _ = boxes[src_name]
-        x1, y1 = sx + sw, sy + 1           # right edge, middle row
+        x1, y1 = sx + sw, sy + 1
+        for branch in branches.get("main", []):
+            for conn in branch:
+                tgt = conn.get("node", "")
+                if tgt not in boxes:
+                    continue
+                tx, ty, _, _ = boxes[tgt]
+                if x1 >= tx:
+                    backward_detour[src_name] = max(
+                        backward_detour.get(src_name, 0),
+                        ty + 1 + _BOX_H,
+                    )
+
+    for src_name, branches in wf.connections.items():
+        if src_name not in boxes:
+            continue
+        sx, sy, sw, _ = boxes[src_name]
+        x1, y1 = sx + sw, sy + 1
 
         for branch in branches.get("main", []):
             for conn in branch:
@@ -156,8 +176,12 @@ def _build_diagram(wf: WorkflowDef) -> Text:
                 if tgt not in boxes:
                     continue
                 tx, ty, _, _ = boxes[tgt]
-                x2, y2 = tx, ty + 1         # left edge, middle row
-                _arrow(grid, styles, x1, y1, x2, y2)
+                x2, y2 = tx, ty + 1
+                if x1 >= x2:
+                    detour = min(backward_detour[src_name], _CANVAS_H - 1)
+                    _backward_arrow(grid, styles, x1, y1, x2, y2, detour)
+                else:
+                    _arrow(grid, styles, x1, y1, x2, y2)
 
     # ── convert to Rich Text ───────────────────────────────────────────────────
     result = Text()
@@ -207,8 +231,7 @@ def _arrow(
     x2: int, y2: int,
 ) -> None:
     if x1 >= x2:
-        _backward_arrow(grid, styles, x1, y1, x2, y2)
-        return
+        return  # backward connections are handled separately in _build_diagram
 
     st = "dim"
     mid = x1 + (x2 - x1) // 2
@@ -245,11 +268,11 @@ def _backward_arrow(
     styles: dict[tuple[int, int], str],
     x1: int, y1: int,
     x2: int, y2: int,
+    detour_y: int,
 ) -> None:
-    """Route a right-to-left connection: drop below both nodes, run left, rise to target."""
+    """Route a right-to-left connection: drop to shared detour row, run left, rise to target."""
     st = "dim"
-    via_x   = max(x2 - 1, 0)
-    detour_y = min(max(y1, y2) + _BOX_H, _CANVAS_H - 1)
+    via_x = max(x2 - 1, 0)
 
     # Drop down from source right edge
     _put(grid, styles, x1, y1, "╮", st)

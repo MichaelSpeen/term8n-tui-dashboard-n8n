@@ -20,6 +20,23 @@ class NodeRun:
 
 
 @dataclass
+class WorkflowNode:
+    id: str
+    name: str
+    node_type: str
+    position: tuple[int, int]
+
+
+@dataclass
+class WorkflowDef:
+    id: str
+    name: str
+    active: bool
+    nodes: list[WorkflowNode]
+    connections: dict  # {node_name: {main: [[{node, type, index}]]}}
+
+
+@dataclass
 class Execution:
     id: str
     workflow_id: str
@@ -82,6 +99,28 @@ class N8NClient:
             Workflow(id=str(w["id"]), name=w["name"], active=w.get("active", False))
             for w in resp.json().get("data", [])
         ]
+
+    async def get_workflow_detail(self, workflow_id: str) -> WorkflowDef:
+        resp = await self._get_client().get(f"/api/v1/workflows/{workflow_id}")
+        resp.raise_for_status()
+        data = resp.json()
+        nodes = [
+            WorkflowNode(
+                id=n.get("id", ""),
+                name=n.get("name", ""),
+                node_type=n.get("type", ""),
+                position=(int(n["position"][0]), int(n["position"][1])),
+            )
+            for n in data.get("nodes", [])
+            if n.get("position")
+        ]
+        return WorkflowDef(
+            id=str(data["id"]),
+            name=data.get("name", "Unknown"),
+            active=data.get("active", False),
+            nodes=nodes,
+            connections=data.get("connections", {}),
+        )
 
     async def get_executions(
         self,

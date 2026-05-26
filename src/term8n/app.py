@@ -7,6 +7,7 @@ from textual.widgets import Footer, Header
 
 from .api import Execution, N8NClient, Workflow
 from .config import Config
+from .screens.workflow_diagram import WorkflowDiagramScreen
 from .widgets.exec_detail import ExecutionDetail
 from .widgets.exec_table import ExecutionTable
 from .widgets.node_modal import NodeDetailModal
@@ -22,6 +23,7 @@ class Term8nApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("w", "workflow_diagram", "Diagram"),
         Binding("escape", "clear_detail", "Clear detail", show=False),
     ]
 
@@ -131,6 +133,22 @@ class Term8nApp(App):
 
     async def action_refresh(self) -> None:
         await self._poll_executions()
+
+    async def action_workflow_diagram(self) -> None:
+        wf_id = self._filter_workflow_id
+        if not wf_id and self._selected_execution_id:
+            for e in self._executions:
+                if e.id == self._selected_execution_id:
+                    wf_id = e.workflow_id
+                    break
+        if not wf_id:
+            self.notify("Select a workflow in the sidebar first", severity="warning")
+            return
+        try:
+            workflow = await self.client.get_workflow_detail(wf_id)
+            await self.push_screen(WorkflowDiagramScreen(workflow))
+        except Exception as exc:
+            self.notify(f"Could not load workflow: {exc}", severity="error")
 
     async def on_execution_detail_node_selected(
         self, event: ExecutionDetail.NodeSelected

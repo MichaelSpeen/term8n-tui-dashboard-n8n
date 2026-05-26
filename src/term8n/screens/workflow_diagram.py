@@ -12,8 +12,9 @@ from ..api import WorkflowDef, WorkflowNode
 _CANVAS_W = 180
 _CANVAS_H = 60
 _BOX_H = 3
-_TOPO_COL_STRIDE = 26   # horizontal space per column in top-down mode
-_TOPO_ROW_STRIDE = 7    # vertical space per depth level in top-down mode
+_TOPO_NODE_W     = 16   # max box width in topo view
+_TOPO_COL_STRIDE = 20   # horizontal space per column in top-down view
+_TOPO_ROW_STRIDE = 5    # vertical space per depth level in top-down view
 
 
 # ── public screen ──────────────────────────────────────────────────────────────
@@ -22,7 +23,6 @@ class WorkflowDiagramScreen(ModalScreen):
     BINDINGS = [
         Binding("escape", "dismiss", "Close"),
         Binding("q",      "dismiss", "Close"),
-        Binding("t",      "toggle_layout", "Toggle layout"),
     ]
 
     DEFAULT_CSS = """
@@ -63,20 +63,15 @@ class WorkflowDiagramScreen(ModalScreen):
     def __init__(self, workflow: WorkflowDef) -> None:
         super().__init__()
         self._workflow = workflow
-        self._topo = False
-
-    def _make_title(self) -> Text:
-        wf = self._workflow
-        active_marker = "● active" if wf.active else "○ inactive"
-        mode = "top-down" if self._topo else "canvas"
-        t = Text()
-        t.append(f" {wf.name}", style="bold white")
-        t.append(f"  ·  {len(wf.nodes)} nodes  ·  ", style="dim")
-        t.append(active_marker, style="bold green" if wf.active else "dim")
-        t.append(f"  ·  {mode}", style="bold yellow" if self._topo else "dim")
-        return t
 
     def compose(self) -> ComposeResult:
+        wf = self._workflow
+        active_marker = "● active" if wf.active else "○ inactive"
+        title_text = Text()
+        title_text.append(f" {wf.name}", style="bold white")
+        title_text.append(f"  ·  {len(wf.nodes)} nodes  ·  ", style="dim")
+        title_text.append(active_marker, style="bold green" if wf.active else "dim")
+
         legend = Text()
         legend.append("  ")
         for label, style in (
@@ -91,20 +86,91 @@ class WorkflowDiagramScreen(ModalScreen):
             legend.append(label, style="dim")
 
         with Static(id="diag-wrap"):
-            yield Label(self._make_title(), id="diag-title")
+            yield Label(title_text, id="diag-title")
             yield Label(legend, id="diag-legend")
             with ScrollableContainer(id="diag-scroll"):
                 yield Static(_build_diagram(self._workflow), id="diag-content")
-            yield Label(
-                " [Esc / q] close   [t] toggle layout   arrow keys: scroll",
-                id="diag-footer",
-            )
+            yield Label(" [Esc / q] close   arrow keys: scroll", id="diag-footer")
 
-    def action_toggle_layout(self) -> None:
-        self._topo = not self._topo
-        build_fn = _build_diagram_topo if self._topo else _build_diagram
-        self.query_one("#diag-content", Static).update(build_fn(self._workflow))
-        self.query_one("#diag-title", Label).update(self._make_title())
+    def on_click(self) -> None:
+        self.dismiss()
+
+
+# ── topo flow screen ───────────────────────────────────────────────────────────
+
+class WorkflowTopoScreen(ModalScreen):
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("q",      "dismiss", "Close"),
+    ]
+
+    DEFAULT_CSS = """
+    WorkflowTopoScreen {
+        align: center middle;
+    }
+    #topo-wrap {
+        width: 95%;
+        height: 90%;
+        border: round $accent;
+        background: $surface;
+        layout: vertical;
+    }
+    #topo-title {
+        height: 1;
+        background: $accent-darken-3;
+        padding: 0 2;
+        width: 100%;
+    }
+    #topo-legend {
+        height: 1;
+        background: $accent-darken-2;
+        padding: 0 2;
+        width: 100%;
+    }
+    #topo-scroll {
+        height: 1fr;
+    }
+    #topo-footer {
+        height: 1;
+        background: $accent-darken-3;
+        padding: 0 2;
+        color: $text-muted;
+        width: 100%;
+    }
+    """
+
+    def __init__(self, workflow: WorkflowDef) -> None:
+        super().__init__()
+        self._workflow = workflow
+
+    def compose(self) -> ComposeResult:
+        wf = self._workflow
+        active_marker = "● active" if wf.active else "○ inactive"
+        title_text = Text()
+        title_text.append(f" {wf.name}", style="bold white")
+        title_text.append(f"  ·  {len(wf.nodes)} nodes  ·  ", style="dim")
+        title_text.append(active_marker, style="bold green" if wf.active else "dim")
+        title_text.append("  ·  flow", style="bold yellow")
+
+        legend = Text()
+        legend.append("  ")
+        for label, style in (
+            ("trigger", "bold blue"),
+            ("  http", "bold cyan"),
+            ("  code", "bold yellow"),
+            ("  logic", "bold magenta"),
+            ("  notify", "bold green"),
+            ("  ai", "bold bright_magenta"),
+        ):
+            legend.append("■ ", style=style)
+            legend.append(label, style="dim")
+
+        with Static(id="topo-wrap"):
+            yield Label(title_text, id="topo-title")
+            yield Label(legend, id="topo-legend")
+            with ScrollableContainer(id="topo-scroll"):
+                yield Static(_build_diagram_topo(self._workflow), id="topo-content")
+            yield Label(" [Esc / q] close   arrow keys: scroll", id="topo-footer")
 
     def on_click(self) -> None:
         self.dismiss()
@@ -385,15 +451,14 @@ def _build_diagram_topo(wf: WorkflowDef) -> Text:
 
     # Assign canvas positions
     pad_x, pad_y = 2, 1
-    node_w = 22
     pos: dict[str, tuple[int, int]] = {}
     for d, names in depth_groups.items():
         for col, name in enumerate(names):
             pos[name] = (pad_x + col * _TOPO_COL_STRIDE, pad_y + d * _TOPO_ROW_STRIDE)
 
-    # Dynamic canvas: tall enough for all nodes
-    canvas_h = max(cy + _BOX_H + 4 for _, cy in pos.values())
-    canvas_w = max(cx + node_w + 2 for cx, _ in pos.values())
+    # Dynamic canvas
+    canvas_h = max(cy + _BOX_H + 3 for _, cy in pos.values())
+    canvas_w = max(cx + _TOPO_NODE_W + 2 for cx, _ in pos.values())
     grid: list[list[str]] = [[" "] * canvas_w for _ in range(canvas_h)]
     styles: dict[tuple[int, int], str] = {}
     boxes: dict[str, tuple[int, int, int, int]] = {}
@@ -401,8 +466,8 @@ def _build_diagram_topo(wf: WorkflowDef) -> Text:
     # Draw boxes
     for n in nodes:
         cx, cy = pos[n.name]
-        label = n.name[:node_w - 4]
-        bw = max(len(label) + 4, 14)
+        label = n.name[:_TOPO_NODE_W - 4]
+        bw = max(len(label) + 4, 10)
         color = _node_color(n.node_type)
         inner = bw - 2
         lpad = (inner - len(label)) // 2

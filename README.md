@@ -53,7 +53,8 @@ term8n
 | Key | Action |
 |-----|--------|
 | `r` | Force refresh |
-| `w` | Open workflow diagram for selected workflow |
+| `w` | Open canvas diagram for selected workflow |
+| `t` | Open top-down flow diagram for selected workflow |
 | `↑ / ↓` | Navigate executions / nodes |
 | `Enter` | Open node detail modal |
 | `Escape` | Close modal / clear selection |

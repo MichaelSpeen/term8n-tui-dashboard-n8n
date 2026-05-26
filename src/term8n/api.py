@@ -127,12 +127,33 @@ class N8NClient:
         workflow_id: Optional[str] = None,
         limit: int = 50,
     ) -> list[Execution]:
-        params: dict = {"limit": limit, "includeData": "false"}
+        client = self._get_client()
+        base: dict = {"limit": limit, "includeData": "false"}
         if workflow_id:
-            params["workflowId"] = workflow_id
-        resp = await self._get_client().get("/api/v1/executions", params=params)
+            base["workflowId"] = workflow_id
+
+        resp = await client.get("/api/v1/executions", params=base)
         resp.raise_for_status()
-        return [self._parse_execution(e) for e in resp.json().get("data", [])]
+        finished = [self._parse_execution(e) for e in resp.json().get("data", [])]
+
+        # n8n's default list omits running/waiting executions; fetch them separately.
+        active: list[Execution] = []
+        for status in ("running", "waiting", "new"):
+            try:
+                r = await client.get("/api/v1/executions", params={**base, "status": status})
+                if r.is_success:
+                    active.extend(self._parse_execution(e) for e in r.json().get("data", []))
+            except Exception:
+                pass
+
+        # Merge: active first so they appear at the top; deduplicate by id.
+        seen: set[str] = set()
+        result: list[Execution] = []
+        for e in active + finished:
+            if e.id not in seen:
+                seen.add(e.id)
+                result.append(e)
+        return result[:limit]
 
     async def get_execution_detail(self, execution_id: str) -> Execution:
         resp = await self._get_client().get(

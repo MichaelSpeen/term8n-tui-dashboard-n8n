@@ -12,6 +12,8 @@ from ..api import WorkflowDef, WorkflowNode
 _CANVAS_W = 180
 _CANVAS_H = 60
 _BOX_H = 3
+_TOPO_COL_STRIDE = 26   # horizontal space per column in top-down mode
+_TOPO_ROW_STRIDE = 7    # vertical space per depth level in top-down mode
 
 
 # ── public screen ──────────────────────────────────────────────────────────────
@@ -20,6 +22,7 @@ class WorkflowDiagramScreen(ModalScreen):
     BINDINGS = [
         Binding("escape", "dismiss", "Close"),
         Binding("q",      "dismiss", "Close"),
+        Binding("t",      "toggle_layout", "Toggle layout"),
     ]
 
     DEFAULT_CSS = """
@@ -60,16 +63,20 @@ class WorkflowDiagramScreen(ModalScreen):
     def __init__(self, workflow: WorkflowDef) -> None:
         super().__init__()
         self._workflow = workflow
+        self._topo = False
 
-    def compose(self) -> ComposeResult:
+    def _make_title(self) -> Text:
         wf = self._workflow
         active_marker = "● active" if wf.active else "○ inactive"
+        mode = "top-down" if self._topo else "canvas"
+        t = Text()
+        t.append(f" {wf.name}", style="bold white")
+        t.append(f"  ·  {len(wf.nodes)} nodes  ·  ", style="dim")
+        t.append(active_marker, style="bold green" if wf.active else "dim")
+        t.append(f"  ·  {mode}", style="bold yellow" if self._topo else "dim")
+        return t
 
-        title_text = Text()
-        title_text.append(f" {wf.name}", style="bold white")
-        title_text.append(f"  ·  {len(wf.nodes)} nodes  ·  ", style="dim")
-        title_text.append(active_marker, style="bold green" if wf.active else "dim")
-
+    def compose(self) -> ComposeResult:
         legend = Text()
         legend.append("  ")
         for label, style in (
@@ -83,14 +90,21 @@ class WorkflowDiagramScreen(ModalScreen):
             legend.append("■ ", style=style)
             legend.append(label, style="dim")
 
-        content = _build_diagram(wf)
-
         with Static(id="diag-wrap"):
-            yield Label(title_text, id="diag-title")
+            yield Label(self._make_title(), id="diag-title")
             yield Label(legend, id="diag-legend")
             with ScrollableContainer(id="diag-scroll"):
-                yield Static(content, id="diag-content")
-            yield Label(" [Esc / q] close   arrow keys: scroll", id="diag-footer")
+                yield Static(_build_diagram(self._workflow), id="diag-content")
+            yield Label(
+                " [Esc / q] close   [t] toggle layout   arrow keys: scroll",
+                id="diag-footer",
+            )
+
+    def action_toggle_layout(self) -> None:
+        self._topo = not self._topo
+        build_fn = _build_diagram_topo if self._topo else _build_diagram
+        self.query_one("#diag-content", Static).update(build_fn(self._workflow))
+        self.query_one("#diag-title", Label).update(self._make_title())
 
     def on_click(self) -> None:
         self.dismiss()
@@ -216,9 +230,11 @@ def _put(
     text: str,
     style: str = "",
 ) -> None:
+    _h = len(grid)
+    _w = len(grid[0]) if _h else 0
     for i, ch in enumerate(text):
         xi = x + i
-        if 0 <= xi < _CANVAS_W and 0 <= y < _CANVAS_H:
+        if 0 <= xi < _w and 0 <= y < _h:
             grid[y][xi] = ch
             if style:
                 styles[(xi, y)] = style
@@ -293,6 +309,145 @@ def _backward_arrow(
 
     # Arrowhead pointing right into target's left edge
     _put(grid, styles, via_x, y2, "►", st)
+
+
+def _arrow_tb(
+    grid: list[list[str]],
+    styles: dict[tuple[int, int], str],
+    x1: int, y1: int,
+    x2: int, y2: int,
+) -> None:
+    """Top-to-bottom arrow: exits source bottom-centre, enters target top-centre."""
+    if y1 >= y2:
+        return
+    st = "dim"
+    mid_y = y1 + (y2 - y1) // 2
+
+    if x1 == x2:
+        for y in range(y1, y2):
+            _put(grid, styles, x1, y, "│", st)
+    else:
+        for y in range(y1, mid_y):
+            _put(grid, styles, x1, y, "│", st)
+        if x2 > x1:
+            _put(grid, styles, x1, mid_y, "╰", st)
+            for x in range(x1 + 1, x2):
+                _put(grid, styles, x, mid_y, "─", st)
+            _put(grid, styles, x2, mid_y, "╮", st)
+        else:
+            _put(grid, styles, x1, mid_y, "╯", st)
+            for x in range(x2 + 1, x1):
+                _put(grid, styles, x, mid_y, "─", st)
+            _put(grid, styles, x2, mid_y, "╭", st)
+        for y in range(mid_y + 1, y2):
+            _put(grid, styles, x2, y, "│", st)
+    _put(grid, styles, x2, y2, "▼", st)
+
+
+def _build_diagram_topo(wf: WorkflowDef) -> Text:
+    """Top-down layout: depth via longest-path BFS, columns by original canvas X."""
+    nodes = wf.nodes
+    if not nodes:
+        return Text("No nodes in this workflow.", style="dim")
+
+    node_names = {n.name for n in nodes}
+    node_by_name = {n.name: n for n in nodes}
+
+    # Build forward adjacency (deduplicated)
+    forward: dict[str, list[str]] = {n.name: [] for n in nodes}
+    for src, branches in wf.connections.items():
+        if src not in node_names:
+            continue
+        for branch in branches.get("main", []):
+            for conn in branch:
+                tgt = conn.get("node", "")
+                if tgt in node_names and tgt not in forward[src]:
+                    forward[src].append(tgt)
+
+    # Longest-path depth (Bellman-Ford, handles cycles safely)
+    depth: dict[str, int] = {n.name: 0 for n in nodes}
+    for _ in range(len(nodes)):
+        updated = False
+        for src, targets in forward.items():
+            for tgt in targets:
+                if depth[src] + 1 > depth[tgt]:
+                    depth[tgt] = depth[src] + 1
+                    updated = True
+        if not updated:
+            break
+
+    # Group by depth; within each level sort by original canvas X position
+    depth_groups: dict[int, list[str]] = {}
+    for n in nodes:
+        depth_groups.setdefault(depth[n.name], []).append(n.name)
+    for d in depth_groups:
+        depth_groups[d].sort(key=lambda name: node_by_name[name].position[0])
+
+    # Assign canvas positions
+    pad_x, pad_y = 2, 1
+    node_w = 22
+    pos: dict[str, tuple[int, int]] = {}
+    for d, names in depth_groups.items():
+        for col, name in enumerate(names):
+            pos[name] = (pad_x + col * _TOPO_COL_STRIDE, pad_y + d * _TOPO_ROW_STRIDE)
+
+    # Dynamic canvas: tall enough for all nodes
+    canvas_h = max(cy + _BOX_H + 4 for _, cy in pos.values())
+    canvas_w = max(cx + node_w + 2 for cx, _ in pos.values())
+    grid: list[list[str]] = [[" "] * canvas_w for _ in range(canvas_h)]
+    styles: dict[tuple[int, int], str] = {}
+    boxes: dict[str, tuple[int, int, int, int]] = {}
+
+    # Draw boxes
+    for n in nodes:
+        cx, cy = pos[n.name]
+        label = n.name[:node_w - 4]
+        bw = max(len(label) + 4, 14)
+        color = _node_color(n.node_type)
+        inner = bw - 2
+        lpad = (inner - len(label)) // 2
+        rpad = inner - len(label) - lpad
+        _put(grid, styles, cx, cy,     "╭" + "─" * inner + "╮", color)
+        _put(grid, styles, cx, cy + 1, "│" + " " * lpad + label + " " * rpad + "│", color)
+        _put(grid, styles, cx, cy + 2, "╰" + "─" * inner + "╯", color)
+        boxes[n.name] = (cx, cy, bw, _BOX_H)
+
+    # Draw top-to-bottom connections (forward edges only)
+    for src, branches in wf.connections.items():
+        if src not in boxes:
+            continue
+        sx, sy, sw, _ = boxes[src]
+        x1 = sx + sw // 2
+        y1 = sy + _BOX_H          # just below source bottom border
+
+        for branch in branches.get("main", []):
+            for conn in branch:
+                tgt = conn.get("node", "")
+                if tgt not in boxes:
+                    continue
+                tx, ty, tw, _ = boxes[tgt]
+                x2 = tx + tw // 2
+                y2 = ty - 1        # just above target top border
+                if y2 <= y1:
+                    continue       # same depth or back-edge — skip
+                _arrow_tb(grid, styles, x1, y1, x2, y2)
+
+    # Convert grid to Rich Text
+    result = Text()
+    last_row = max((r for r, row in enumerate(grid) if any(ch != " " for ch in row)), default=0)
+    for r in range(last_row + 2):
+        row = grid[r]
+        c = 0
+        while c < len(row):
+            ch = row[c]
+            st = styles.get((c, r), "")
+            end = c + 1
+            while end < len(row) and styles.get((end, r), "") == st:
+                end += 1
+            result.append("".join(row[c:end]), style=st)
+            c = end
+        result.append("\n")
+    return result
 
 
 def _node_color(node_type: str) -> str:

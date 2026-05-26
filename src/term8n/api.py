@@ -153,15 +153,20 @@ class N8NClient:
 
         node_runs: list[NodeRun] = []
         if include_data:
+            exec_data = e.get("data") or {}
             run_data: dict = (
-                e.get("data", {}).get("resultData", {}).get("runData", {})
+                exec_data.get("resultData", {}).get("runData", {})
+                or exec_data.get("runData", {})
             )
             for node_name, runs in run_data.items():
                 for run in runs:
-                    branches = run.get("data", {}).get("main") or []
+                    branches = (run.get("data") or {}).get("main") or []
                     items = sum(len(b) for b in branches if b)
-                    first_branch = branches[0] if branches else []
-                    output_data = [item.get("json", {}) for item in first_branch if item]
+                    first_branch = next((b for b in branches if b), [])
+                    output_data = [
+                        item["json"] for item in first_branch
+                        if isinstance(item, dict) and "json" in item
+                    ]
                     err = run.get("error")
                     err_msg = err.get("message") if isinstance(err, dict) else None
                     node_runs.append(

@@ -207,7 +207,8 @@ def _arrow(
     x2: int, y2: int,
 ) -> None:
     if x1 >= x2:
-        return          # skip backwards / same-column connections
+        _backward_arrow(grid, styles, x1, y1, x2, y2)
+        return
 
     st = "dim"
     mid = x1 + (x2 - x1) // 2
@@ -237,6 +238,38 @@ def _arrow(
     # arrow head
     if x2 - 1 >= x1:
         _put(grid, styles, x2 - 1, y2, "►", st)
+
+
+def _backward_arrow(
+    grid: list[list[str]],
+    styles: dict[tuple[int, int], str],
+    x1: int, y1: int,
+    x2: int, y2: int,
+) -> None:
+    """Route a right-to-left connection: drop below both nodes, run left, rise to target."""
+    st = "dim"
+    via_x   = max(x2 - 1, 0)
+    detour_y = min(max(y1, y2) + _BOX_H, _CANVAS_H - 1)
+
+    # Drop down from source right edge
+    _put(grid, styles, x1, y1, "╮", st)
+    for y in range(y1 + 1, detour_y):
+        _put(grid, styles, x1, y, "│", st)
+    _put(grid, styles, x1, detour_y, "╯", st)
+
+    # Horizontal run leftward at detour_y
+    for x in range(via_x + 1, x1):
+        _put(grid, styles, x, detour_y, "─", st)
+
+    # Corner turning upward
+    _put(grid, styles, via_x, detour_y, "╰", st)
+
+    # Upward run to target row
+    for y in range(y2 + 1, detour_y):
+        _put(grid, styles, via_x, y, "│", st)
+
+    # Arrowhead pointing right into target's left edge
+    _put(grid, styles, via_x, y2, "►", st)
 
 
 def _node_color(node_type: str) -> str:

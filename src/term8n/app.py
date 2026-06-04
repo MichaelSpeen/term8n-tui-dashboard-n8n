@@ -6,6 +6,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header
 
 from .api import Execution, N8NClient, Workflow, WorkflowDef
+from .push import PushClient
 from .config import Config
 from .screens.workflow_diagram import WorkflowDiagramScreen, WorkflowTopoScreen
 from .widgets.exec_detail import ExecutionDetail
@@ -38,6 +39,7 @@ class Term8nApp(App):
         super().__init__()
         self.config = Config.from_env()
         self.client = N8NClient(self.config)
+        self.push = PushClient(self.config.base_url, self.config.push_email, self.config.push_password)
         self._filter_workflow_id: str | None = None
         self._selected_execution_id: str | None = None
         self._executions: list[Execution] = []
@@ -68,6 +70,8 @@ class Term8nApp(App):
         self.set_interval(self.config.poll_interval, self._poll_executions)
         self.set_interval(1.0, self._fast_refresh_running)
         self.set_interval(2.0, lambda: self.query_one(SysBar).refresh_stats())
+        self.push.on_update(self._on_push_update)
+        self.push.start()
 
     async def _initial_load(self) -> None:
         try:
@@ -136,9 +140,16 @@ class Term8nApp(App):
                 if cached:
                     sorted_nodes = sorted(cached.nodes, key=lambda n: n.position[0])
                     wf_node_names = [n.name for n in sorted_nodes]
-            self.query_one(ExecutionDetail).show_execution(detail, wf_node_names)
+            live = self.push.get_live(execution_id)
+            self.query_one(ExecutionDetail).show_execution(detail, wf_node_names, live)
         except Exception as exc:
             self.notify(f"Could not load execution detail: {exc}", severity="error")
+
+    def _on_push_update(self, execution_id: str) -> None:
+        if execution_id != self._selected_execution_id:
+            return
+        live = self.push.get_live(execution_id)
+        self.query_one(ExecutionDetail).update_live(live)
 
     def on_workflow_sidebar_filter_changed(
         self, event: WorkflowSidebar.FilterChanged
@@ -200,4 +211,5 @@ class Term8nApp(App):
         self.query_one(ExecutionDetail).clear_detail()
 
     async def on_unmount(self) -> None:
+        self.push.stop()
         await self.client.aclose()

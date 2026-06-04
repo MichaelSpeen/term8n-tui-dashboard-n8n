@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import httpx
+import websockets.asyncio.client as ws_client
 
 
 @dataclass
@@ -20,15 +21,16 @@ UpdateCallback = Callable[[str], None]  # called with execution_id on every stat
 
 
 class PushClient:
-    """Subscribes to n8n's SSE push endpoint for real-time node execution events.
+    """Subscribes to n8n's WebSocket push endpoint for real-time node execution events.
 
-    n8n's push endpoint uses cookie auth, not the API key. Requires N8N_EMAIL
-    and N8N_PASSWORD to be set. Falls back gracefully if credentials are missing
-    or login fails — polling continues as normal.
+    Requires N8N_EMAIL and N8N_PASSWORD — the push endpoint uses cookie session auth,
+    not the API key. Falls back gracefully (polling only) when credentials are absent
+    or login fails.
     """
 
     def __init__(self, base_url: str, email: str, password: str) -> None:
         self._base_url = base_url.rstrip("/")
+        self._ws_url = self._base_url.replace("http://", "ws://").replace("https://", "wss://")
         self._email = email
         self._password = password
         self._push_ref = str(uuid.uuid4())
@@ -36,6 +38,7 @@ class PushClient:
         self._callbacks: list[UpdateCallback] = []
         self._task: Optional[asyncio.Task] = None
         self.connected = False
+        self.login_failed = False          # True after a 401 — wrong credentials
         self.available = bool(email and password)
 
     # ── public API ─────────────────────────────────────────────────────────────
@@ -63,7 +66,7 @@ class PushClient:
     async def _run_forever(self) -> None:
         while True:
             try:
-                await self._connect_and_stream()
+                await self._connect_and_listen()
             except asyncio.CancelledError:
                 return
             except Exception:
@@ -71,36 +74,39 @@ class PushClient:
             self.connected = False
             await asyncio.sleep(10)
 
-    async def _connect_and_stream(self) -> None:
+    async def _connect_and_listen(self) -> None:
+        # 1. Login to obtain session cookie
         async with httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
-            follow_redirects=True,
-        ) as client:
-            login = await client.post(
+            base_url=self._base_url, timeout=10.0, follow_redirects=True
+        ) as http:
+            login = await http.post(
                 "/rest/login",
                 json={"emailOrLdapLoginId": self._email, "password": self._password},
             )
             if login.status_code == 401:
-                self.available = False  # wrong credentials — stop retrying
+                self.available = False
+                self.login_failed = True  # wrong credentials — stop retrying
                 return
             if not login.is_success:
                 return
+            token = http.cookies.get("n8n-auth", "")
 
-            async with client.stream(
-                "GET", f"/rest/push?pushRef={self._push_ref}"
-            ) as response:
-                if response.status_code != 200:
-                    return
-                self.connected = True
-                async for line in response.aiter_lines():
-                    if line.startswith("data:"):
-                        raw = line[5:].strip()
-                        if raw:
-                            try:
-                                self._handle(json.loads(raw))
-                            except Exception:
-                                pass
+        if not token:
+            return
+
+        # 2. Open WebSocket with cookie in handshake
+        url = f"{self._ws_url}/rest/push?pushRef={self._push_ref}"
+        async with ws_client.connect(
+            url,
+            additional_headers={"Cookie": f"n8n-auth={token}"},
+            open_timeout=10,
+        ) as ws:
+            self.connected = True
+            async for raw in ws:
+                try:
+                    self._handle(json.loads(raw))
+                except Exception:
+                    pass
 
     def _handle(self, event: dict) -> None:
         etype = event.get("type", "")

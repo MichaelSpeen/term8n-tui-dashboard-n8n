@@ -69,7 +69,7 @@ class Term8nApp(App):
         self.call_after_refresh(self._initial_load)
         self.set_interval(self.config.poll_interval, self._poll_executions)
         self.set_interval(1.0, self._fast_refresh_running)
-        self.set_interval(2.0, lambda: self.query_one(SysBar).refresh_stats())
+        self.set_interval(2.0, self._refresh_sys_bar)
         self.push.on_update(self._on_push_update)
         self.push.start()
 
@@ -144,6 +144,19 @@ class Term8nApp(App):
             self.query_one(ExecutionDetail).show_execution(detail, wf_node_names, live)
         except Exception as exc:
             self.notify(f"Could not load execution detail: {exc}", severity="error")
+
+    def _refresh_sys_bar(self) -> None:
+        api_key_ok: bool | None = self._connected if self.config.api_key else None
+
+        creds_ok: bool | None = None
+        if self.config.push_email and self.config.push_password:
+            if self.push.login_failed:
+                creds_ok = False       # 401 — wrong credentials
+            elif self.push.connected:
+                creds_ok = True        # WebSocket live
+            # else: still starting / reconnecting — show nothing yet
+
+        self.query_one(SysBar).set_connection_status(api_key_ok, creds_ok)
 
     def _on_push_update(self, execution_id: str) -> None:
         if execution_id != self._selected_execution_id:

@@ -59,17 +59,16 @@ class ExecutionDetail(Widget):
         self._node_runs = execution.node_runs
         is_running = execution.status == "running"
 
-        active = execution.active_node_name
         icon, _ = _STATUS.get(execution.status, ("?", "dim"))
         duration = _fmt_dur(execution.duration_seconds)
+        completed = len(self._node_runs)
         label_text = Text()
         label_text.append(f"#{execution.id}", style="dim")
         label_text.append(f"  ·  {execution.workflow_name}  ·  ")
         label_text.append(f"{icon} {execution.status.capitalize()}", style="bold yellow" if is_running else "")
         label_text.append(f"  ·  {duration}")
         if is_running:
-            node_label = f"▶ {active}" if active else "▶ running"
-            label_text.append(f"  ·  {node_label}", style="bold yellow")
+            label_text.append(f"  ·  {completed} node{'s' if completed != 1 else ''} done  ▶ running", style="bold yellow")
         self.query_one("#detail-label", Label).update(label_text)
 
         table = self.query_one(DataTable)
@@ -80,9 +79,8 @@ class ExecutionDetail(Widget):
             table.add_row(*_make_row(node, max_ms), key=str(i))
 
         if is_running:
-            name = active or "…"
             table.add_row(
-                Text(f"▶ {name}", style="bold yellow"),
+                Text("▶ running…", style="bold yellow"),
                 Text("░" * _MAX_BAR, style="yellow"),
                 Text("running", style="bold yellow"),
                 Text("—", style="dim"),

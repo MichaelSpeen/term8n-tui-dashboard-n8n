@@ -59,6 +59,7 @@ class ExecutionDetail(Widget):
         self._node_runs = execution.node_runs
         is_running = execution.status == "running"
 
+        active = execution.active_node_name
         icon, _ = _STATUS.get(execution.status, ("?", "dim"))
         duration = _fmt_dur(execution.duration_seconds)
         label_text = Text()
@@ -67,31 +68,21 @@ class ExecutionDetail(Widget):
         label_text.append(f"{icon} {execution.status.capitalize()}", style="bold yellow" if is_running else "")
         label_text.append(f"  ·  {duration}")
         if is_running:
-            label_text.append("  ·  ▶ running", style="bold yellow")
+            node_label = f"▶ {active}" if active else "▶ running"
+            label_text.append(f"  ·  {node_label}", style="bold yellow")
         self.query_one("#detail-label", Label).update(label_text)
 
         table = self.query_one(DataTable)
         table.clear()
-
-        if not self._node_runs and is_running:
-            # Execution started but no nodes have completed yet
-            table.add_row(
-                Text("● starting…", style="bold yellow"),
-                Text("░" * _MAX_BAR, style="dim yellow"),
-                Text("—", style="dim"),
-                Text("—", style="dim"),
-                key="__running__",
-            )
-            return
 
         max_ms = max((n.execution_time_ms for n in self._node_runs), default=1) or 1
         for i, node in enumerate(self._node_runs):
             table.add_row(*_make_row(node, max_ms), key=str(i))
 
         if is_running:
-            # Append a sentinel row: nodes completed so far, next one is in progress
+            name = active or "…"
             table.add_row(
-                Text("▶ running…", style="bold yellow"),
+                Text(f"▶ {name}", style="bold yellow"),
                 Text("░" * _MAX_BAR, style="yellow"),
                 Text("running", style="bold yellow"),
                 Text("—", style="dim"),

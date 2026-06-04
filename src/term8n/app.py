@@ -65,6 +65,7 @@ class Term8nApp(App):
             )
         self.call_after_refresh(self._initial_load)
         self.set_interval(self.config.poll_interval, self._poll_executions)
+        self.set_interval(1.0, self._fast_refresh_running)
         self.set_interval(2.0, lambda: self.query_one(SysBar).refresh_stats())
 
     async def _initial_load(self) -> None:
@@ -131,6 +132,15 @@ class Term8nApp(App):
     ) -> None:
         self._filter_workflow_id = event.workflow_id
         self.call_after_refresh(self._poll_executions)
+
+    async def _fast_refresh_running(self) -> None:
+        if not self._selected_execution_id:
+            return
+        selected = next(
+            (e for e in self._executions if e.id == self._selected_execution_id), None
+        )
+        if selected and selected.status in ("running", "waiting", "new"):
+            await self._refresh_detail(self._selected_execution_id)
 
     async def action_refresh(self) -> None:
         await self._poll_executions()

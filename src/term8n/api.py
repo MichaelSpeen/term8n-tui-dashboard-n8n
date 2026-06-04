@@ -46,6 +46,7 @@ class Execution:
     started_at: Optional[datetime]
     stopped_at: Optional[datetime]
     node_runs: list[NodeRun] = field(default_factory=list)
+    active_node_name: Optional[str] = None  # top of nodeExecutionStack for running executions
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -173,6 +174,7 @@ class N8NClient:
         )
 
         node_runs: list[NodeRun] = []
+        active_node_name: Optional[str] = None
         if include_data:
             exec_data = e.get("data") or {}
             run_data: dict = (
@@ -202,6 +204,17 @@ class N8NClient:
                     )
             node_runs.sort(key=lambda n: n.start_time_ms)
 
+            # For running executions n8n keeps the active node in nodeExecutionStack
+            # rather than runData (it's only written there after it completes).
+            try:
+                stack = exec_data.get("executionData", {}).get("nodeExecutionStack") or []
+                if stack and isinstance(stack, list):
+                    top = stack[0]
+                    if isinstance(top, dict):
+                        active_node_name = (top.get("node") or {}).get("name")
+            except Exception:
+                pass
+
         return Execution(
             id=str(e["id"]),
             workflow_id=str(e.get("workflowId", "")),
@@ -211,6 +224,7 @@ class N8NClient:
             started_at=started_at,
             stopped_at=stopped_at,
             node_runs=node_runs,
+            active_node_name=active_node_name,
         )
 
     async def aclose(self) -> None:

@@ -45,7 +45,6 @@ class ExecutionDetail(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._node_runs: list[NodeRun] = []
-        self._active_idx: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("Select an execution above to inspect its nodes", id="detail-label")
@@ -58,31 +57,46 @@ class ExecutionDetail(Widget):
 
     def show_execution(self, execution: Execution) -> None:
         self._node_runs = execution.node_runs
-
-        # Detect the currently executing node: last zero-time node in a running execution.
-        self._active_idx = None
-        if execution.status == "running":
-            for i in range(len(execution.node_runs) - 1, -1, -1):
-                if execution.node_runs[i].execution_time_ms == 0:
-                    self._active_idx = i
-                    break
+        is_running = execution.status == "running"
 
         icon, _ = _STATUS.get(execution.status, ("?", "dim"))
         duration = _fmt_dur(execution.duration_seconds)
         label_text = Text()
         label_text.append(f"#{execution.id}", style="dim")
-        label_text.append(f"  ·  {execution.workflow_name}  ·  ", style="")
-        label_text.append(f"{icon} {execution.status.capitalize()}", style="bold yellow" if execution.status == "running" else "")
+        label_text.append(f"  ·  {execution.workflow_name}  ·  ")
+        label_text.append(f"{icon} {execution.status.capitalize()}", style="bold yellow" if is_running else "")
         label_text.append(f"  ·  {duration}")
-        if execution.status == "running" and self._active_idx is not None:
-            label_text.append(f"  ·  ▶ {execution.node_runs[self._active_idx].name}", style="bold yellow")
+        if is_running:
+            label_text.append("  ·  ▶ running", style="bold yellow")
         self.query_one("#detail-label", Label).update(label_text)
 
         table = self.query_one(DataTable)
         table.clear()
+
+        if not self._node_runs and is_running:
+            # Execution started but no nodes have completed yet
+            table.add_row(
+                Text("● starting…", style="bold yellow"),
+                Text("░" * _MAX_BAR, style="dim yellow"),
+                Text("—", style="dim"),
+                Text("—", style="dim"),
+                key="__running__",
+            )
+            return
+
         max_ms = max((n.execution_time_ms for n in self._node_runs), default=1) or 1
         for i, node in enumerate(self._node_runs):
-            table.add_row(*_make_row(node, max_ms, is_active=(i == self._active_idx)), key=str(i))
+            table.add_row(*_make_row(node, max_ms), key=str(i))
+
+        if is_running:
+            # Append a sentinel row: nodes completed so far, next one is in progress
+            table.add_row(
+                Text("▶ running…", style="bold yellow"),
+                Text("░" * _MAX_BAR, style="yellow"),
+                Text("running", style="bold yellow"),
+                Text("—", style="dim"),
+                key="__running__",
+            )
 
     def clear_detail(self) -> None:
         self._node_runs = []
@@ -92,19 +106,15 @@ class ExecutionDetail(Widget):
         self.query_one(DataTable).clear()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        idx = int(str(event.row_key.value))
+        key = str(event.row_key.value)
+        if key == "__running__":
+            return
+        idx = int(key)
         if 0 <= idx < len(self._node_runs):
             self.post_message(ExecutionDetail.NodeSelected(self._node_runs[idx]))
 
 
-def _make_row(node: NodeRun, max_ms: int, is_active: bool = False) -> tuple:
-    if is_active:
-        name_text = Text("▶ " + node.name[:22], style="bold yellow")
-        bar_text = Text("░" * _MAX_BAR, style="yellow")
-        time_text = Text("running", style="bold yellow")
-        items_text = Text("—", style="dim")
-        return name_text, bar_text, time_text, items_text
-
+def _make_row(node: NodeRun, max_ms: int) -> tuple:
     if node.error:
         name_text = Text(node.name[:24], style="bold red")
         bar_char, bar_style = "█", "bold red"

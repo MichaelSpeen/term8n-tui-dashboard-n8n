@@ -55,28 +55,38 @@ class ExecutionDetail(Widget):
         t.add_column("Items",   key="items", width=6)
         yield t
 
-    def show_execution(self, execution: Execution) -> None:
+    def show_execution(self, execution: Execution, wf_node_names: list[str] | None = None) -> None:
         self._node_runs = execution.node_runs
-        is_running = execution.status == "running"
+        is_running = execution.status in ("running", "waiting", "new")
 
         icon, _ = _STATUS.get(execution.status, ("?", "dim"))
         duration = _fmt_dur(execution.duration_seconds)
-        completed = len(self._node_runs)
         label_text = Text()
         label_text.append(f"#{execution.id}", style="dim")
         label_text.append(f"  ·  {execution.workflow_name}  ·  ")
         label_text.append(f"{icon} {execution.status.capitalize()}", style="bold yellow" if is_running else "")
         label_text.append(f"  ·  {duration}")
         if is_running:
-            label_text.append(f"  ·  {completed} node{'s' if completed != 1 else ''} done  ▶ running", style="bold yellow")
+            label_text.append("  ·  ▶ running", style="bold yellow")
         self.query_one("#detail-label", Label).update(label_text)
 
         table = self.query_one(DataTable)
         table.clear()
 
-        max_ms = max((n.execution_time_ms for n in self._node_runs), default=1) or 1
-        for i, node in enumerate(self._node_runs):
-            table.add_row(*_make_row(node, max_ms), key=str(i))
+        if self._node_runs:
+            max_ms = max((n.execution_time_ms for n in self._node_runs), default=1) or 1
+            for i, node in enumerate(self._node_runs):
+                table.add_row(*_make_row(node, max_ms), key=str(i))
+        elif is_running and wf_node_names:
+            # n8n doesn't expose partial runData via REST — show workflow nodes as a plan
+            for i, name in enumerate(wf_node_names):
+                table.add_row(
+                    Text("○ " + name[:24], style="dim"),
+                    Text("·" * 4, style="dim"),
+                    Text("—", style="dim"),
+                    Text("—", style="dim"),
+                    key=f"__plan_{i}__",
+                )
 
         if is_running:
             table.add_row(
@@ -96,7 +106,7 @@ class ExecutionDetail(Widget):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         key = str(event.row_key.value)
-        if key == "__running__":
+        if key.startswith("__"):
             return
         idx = int(key)
         if 0 <= idx < len(self._node_runs):

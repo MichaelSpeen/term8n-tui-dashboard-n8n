@@ -5,7 +5,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header
 
-from .api import Execution, N8NClient, Workflow
+from .api import Execution, N8NClient, Workflow, WorkflowDef
 from .config import Config
 from .screens.workflow_diagram import WorkflowDiagramScreen, WorkflowTopoScreen
 from .widgets.exec_detail import ExecutionDetail
@@ -42,6 +42,7 @@ class Term8nApp(App):
         self._selected_execution_id: str | None = None
         self._executions: list[Execution] = []
         self._workflows: list[Workflow] = []
+        self._wf_cache: dict[str, WorkflowDef] = {}
         self._connected = False
 
     def compose(self) -> ComposeResult:
@@ -123,7 +124,19 @@ class Term8nApp(App):
     async def _refresh_detail(self, execution_id: str) -> None:
         try:
             detail = await self.client.get_execution_detail(execution_id)
-            self.query_one(ExecutionDetail).show_execution(detail)
+            wf_node_names: list[str] = []
+            if detail.status in ("running", "waiting", "new") and not detail.node_runs:
+                wf_id = detail.workflow_id
+                if wf_id and wf_id not in self._wf_cache:
+                    try:
+                        self._wf_cache[wf_id] = await self.client.get_workflow_detail(wf_id)
+                    except Exception:
+                        pass
+                cached = self._wf_cache.get(wf_id or "")
+                if cached:
+                    sorted_nodes = sorted(cached.nodes, key=lambda n: n.position[0])
+                    wf_node_names = [n.name for n in sorted_nodes]
+            self.query_one(ExecutionDetail).show_execution(detail, wf_node_names)
         except Exception as exc:
             self.notify(f"Could not load execution detail: {exc}", severity="error")
 
